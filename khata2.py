@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
 import os
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 from datetime import date
 
 # --- PAGE CONFIG ---
