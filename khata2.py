@@ -23,22 +23,29 @@ def get_sheet(sheet_name):
     client = get_client()
     return client.open("TriveniData").worksheet(sheet_name)
 
+def delete_row(sheet_name, row_index):
+    sheet = get_sheet(sheet_name)
+    sheet.delete_rows(row_index)
+
+def update_row(sheet_name, row_index, row_data):
+    sheet = get_sheet(sheet_name)
+    end_col = chr(65 + len(row_data) - 1)  # A, B, C...
+    sheet.update(f"A{row_index}:{end_col}{row_index}", [row_data])
+
 @st.cache_data(ttl=5)
 def load_data(sheet_name, columns):
     sheet = get_sheet(sheet_name)
     data = sheet.get_all_records()
 
-    if not data:
-        sheet.update([columns])
-        return pd.DataFrame(columns=columns)
-
     df = pd.DataFrame(data)
 
-    for col in columns:
-        if col not in df.columns:
-            df[col] = None
+    if df.empty:
+        df = pd.DataFrame(columns=columns)
 
-    return df[columns]
+    # Add index column to track row number in sheet
+    df["row_index"] = range(2, len(df) + 2)  # row 1 is header
+
+    return df
 
 def append_data(sheet_name, row):
     sheet = get_sheet(sheet_name)
@@ -254,9 +261,120 @@ if check_password():
     # --- SALES HISTORY ---
     elif choice == t("sales_history"):
         st.subheader(t("sales_history"))
-        st.dataframe(sales_df, use_container_width=True)
+
+        if not sales_df.empty:
+
+            # Toggle edit mode
+            edit_mode = st.toggle("✏️ Edit Mode")
+
+            if edit_mode:
+
+                edited_df = st.data_editor(
+                    sales_df.drop(columns=["row_index"]),
+                    use_container_width=True,
+                    num_rows="dynamic",
+                    key="sales_editor"
+                )
+
+                col1, col2 = st.columns(2)
+
+                # --- SAVE CHANGES ---
+                with col1:
+                    if st.button("💾 Save Changes"):
+                        for i, row in edited_df.iterrows():
+                            original_row_index = sales_df.loc[i, "row_index"]
+
+                            updated_row = [
+                                str(row["date"]),
+                                row["customer"],
+                                row["phone"],
+                                row["block"],
+                                row["bill"],
+                                row["paid"],
+                                row["bill"] - row["paid"],
+                            ]
+
+                            update_row(SALES_SHEET, int(original_row_index), updated_row)
+
+                        st.success("All changes saved!")
+                        st.cache_data.clear()
+                        st.rerun()
+
+                # --- DELETE SELECTED ---
+                with col2:
+                    selected_rows = st.multiselect(
+                        "Select rows to delete",
+                        sales_df.index,
+                        format_func=lambda x: f"{sales_df.loc[x, 'customer']} - {sales_df.loc[x, 'date']}"
+                    )
+
+                    if st.button("🗑️ Delete Selected"):
+                        for i in sorted(selected_rows, reverse=True):
+                            delete_row(SALES_SHEET, int(sales_df.loc[i, "row_index"]))
+
+                        st.warning("Deleted selected rows")
+                        st.cache_data.clear()
+                        st.rerun()
+
+            else:
+                st.dataframe(sales_df, use_container_width=True)
+
 
     # --- EXPENSE HISTORY ---
     elif choice == t("expense_history"):
         st.subheader(t("expense_history"))
-        st.dataframe(expense_df, use_container_width=True)
+
+        if not expense_df.empty:
+
+            edit_mode = st.toggle("✏️ Edit Mode")
+
+            if edit_mode:
+
+                edited_df = st.data_editor(
+                    expense_df.drop(columns=["row_index"]),
+                    use_container_width=True,
+                    num_rows="dynamic",
+                    key="expense_editor"
+                )
+
+                col1, col2 = st.columns(2)
+
+                # --- SAVE ---
+                with col1:
+                    if st.button("💾 Save Changes"):
+                        for i, row in edited_df.iterrows():
+                            original_row_index = expense_df.loc[i, "row_index"]
+
+                            update_row(
+                                EXPENSE_SHEET,
+                                int(original_row_index),
+                                [
+                                    str(row["date"]),
+                                    row["desc"],
+                                    row["cat"],
+                                    row["amt"],
+                                ],
+                            )
+
+                        st.success("Expense changes saved!")
+                        st.cache_data.clear()
+                        st.rerun()
+
+                # --- DELETE ---
+                with col2:
+                    selected_rows = st.multiselect(
+                        "Select rows to delete",
+                        expense_df.index,
+                        format_func=lambda x: f"{expense_df.loc[x, 'desc']} - {expense_df.loc[x, 'date']}"
+                    )
+
+                    if st.button("🗑️ Delete Selected"):
+                        for i in sorted(selected_rows, reverse=True):
+                            delete_row(EXPENSE_SHEET, int(expense_df.loc[i, "row_index"]))
+
+                        st.warning("Deleted selected expenses")
+                        st.cache_data.clear()
+                        st.rerun()
+
+            else:
+                st.dataframe(expense_df, use_container_width=True)
