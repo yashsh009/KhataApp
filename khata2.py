@@ -1,12 +1,48 @@
 import streamlit as st
 import pandas as pd
-import os
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
 from datetime import date
+import gspread
+from google.oauth2.service_account import Credentials
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Triveni Enterprises", layout="wide", page_icon="🏗️")
+
+# --- GOOGLE SHEETS SETUP ---
+@st.cache_resource
+def get_client():
+    creds = Credentials.from_service_account_info(
+        st.secrets["gcp_service_account"],
+        scopes=[
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive"
+        ],
+    )
+    return gspread.authorize(creds)
+
+def get_sheet(sheet_name):
+    client = get_client()
+    return client.open("TriveniData").worksheet(sheet_name)
+
+@st.cache_data(ttl=5)
+def load_data(sheet_name, columns):
+    sheet = get_sheet(sheet_name)
+    data = sheet.get_all_records()
+
+    if not data:
+        sheet.update([columns])
+        return pd.DataFrame(columns=columns)
+
+    df = pd.DataFrame(data)
+
+    for col in columns:
+        if col not in df.columns:
+            df[col] = None
+
+    return df[columns]
+
+def append_data(sheet_name, row):
+    sheet = get_sheet(sheet_name)
+    sheet.append_row(row)
 
 # --- LANGUAGE SYSTEM ---
 if "lang" not in st.session_state:
@@ -91,41 +127,13 @@ CATEGORY_MAP = {
     "HI": ["कच्चा माल", "लेबर", "बिजली/डीजल", "अन्य"]
 }
 
-# --- DATA FUNCTIONS ---
-def save_data(df, filename):
-    df.to_csv(filename, index=False)
+# --- SHEET NAMES ---
+SALES_SHEET = "Sales"
+EXPENSE_SHEET = "Expenses"
 
-def load_data(filename, columns):
-    if os.path.exists(filename):
-        try:
-            return pd.read_csv(filename)
-        except:
-            return pd.DataFrame(columns=columns)
-    return pd.DataFrame(columns=columns)
-
-SALES_FILE = "triveni_sales.csv"
-EXPENSE_FILE = "triveni_expenses.csv"
-
-sales_df = load_data(SALES_FILE, ["date", "customer", "phone", "block", "bill", "paid", "balance"])
-expense_df = load_data(EXPENSE_FILE, ["date", "desc", "cat", "amt"])
-
-# --- FIX OLD HINDI DATA ---
-sales_df.rename(columns={
-    "तारीख": "date",
-    "ग्राहक": "customer",
-    "मोबाइल": "phone",
-    "ब्लॉक_टाइप": "block",
-    "कुल_बिल": "bill",
-    "जमा_राशि": "paid",
-    "बकाया": "balance"
-}, inplace=True)
-
-expense_df.rename(columns={
-    "तारीख": "date",
-    "विवरण": "desc",
-    "श्रेणी": "cat",
-    "रकम": "amt"
-}, inplace=True)
+# --- LOAD DATA ---
+sales_df = load_data(SALES_SHEET, ["date", "customer", "phone", "block", "bill", "paid", "balance"])
+expense_df = load_data(EXPENSE_SHEET, ["date", "desc", "cat", "amt"])
 
 # Ensure numeric
 sales_df["paid"] = pd.to_numeric(sales_df.get("paid"), errors="coerce").fillna(0)
@@ -141,7 +149,6 @@ def check_password():
         st.title(t("title"))
         st.subheader(t("login"))
 
-        # FORM → allows Enter key submission
         with st.form("login_form"):
             pwd = st.text_input(t("password"), type="password")
             submitted = st.form_submit_button(t("login_btn"))
@@ -151,7 +158,7 @@ def check_password():
                     st.session_state.auth = True
                     st.rerun()
                 else:
-                    st.error(t("wrong_pass"))  # already translated
+                    st.error(t("wrong_pass"))
 
         st.stop()
     return True
@@ -199,10 +206,20 @@ if check_password():
             if st.form_submit_button(t("save_bill")):
                 if cust:
                     bal = bill - paid
-                    new = pd.DataFrame([[date.today(), cust, phone, "", bill, paid, bal]],
-                                       columns=sales_df.columns)
-                    save_data(pd.concat([sales_df, new], ignore_index=True), SALES_FILE)
+
+                    append_data(SALES_SHEET, [
+                        str(date.today()),
+                        cust,
+                        phone,
+                        "",
+                        bill,
+                        paid,
+                        bal
+                    ])
+
                     st.success("Saved!")
+                    st.cache_data.clear()
+                    st.rerun()
                 else:
                     st.error("Enter name")
 
@@ -223,10 +240,16 @@ if check_password():
 
             if st.form_submit_button(t("save_exp")):
                 if desc and amt > 0:
-                    new = pd.DataFrame([[date.today(), desc, cat, amt]],
-                                       columns=expense_df.columns)
-                    save_data(pd.concat([expense_df, new], ignore_index=True), EXPENSE_FILE)
+                    append_data(EXPENSE_SHEET, [
+                        str(date.today()),
+                        desc,
+                        cat,
+                        amt
+                    ])
+
                     st.success(t("exp_saved"))
+                    st.cache_data.clear()
+                    st.rerun()
 
     # --- SALES HISTORY ---
     elif choice == t("sales_history"):
