@@ -3,6 +3,7 @@ import pandas as pd
 from datetime import date
 import gspread
 from google.oauth2.service_account import Credentials
+import matplotlib.pyplot as plt
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Triveni Enterprises", layout="wide", page_icon="🏗️")
@@ -90,7 +91,16 @@ T = {
         "save_exp": "Save Expense",
         "exp_saved": "Expense saved!",
         "sales_history": "📜 Sales History",
-        "expense_history": "💸 Expense History"
+        "expense_history": "💸 Expense History",
+        "edit_mode": "✏️ Edit Mode",
+        "save_changes": "💾 Save Changes",
+        "delete_selected": "🗑️ Delete Selected",
+        "select_rows_delete": "Select rows to delete",
+        "changes_saved": "Changes saved!",
+        "rows_deleted": "Selected rows deleted!",
+        "enter_name": "Please enter customer name",
+        "enter_desc": "Please enter description",
+        "saved": "Saved successfully!"
     },
     "HI": {
         "title": "🏗️ त्रिवेणी एंटरप्राइजेज",
@@ -121,7 +131,16 @@ T = {
         "save_exp": "खर्च सेव करें",
         "exp_saved": "खर्च सेव हो गया!",
         "sales_history": "📜 बिक्री हिस्ट्री",
-        "expense_history": "💸 खर्च हिस्ट्री"
+        "expense_history": "💸 खर्च हिस्ट्री",
+        "edit_mode": "✏️ एडिट मोड",
+        "save_changes": "💾 बदलाव सेव करें",
+        "delete_selected": "🗑️ चयनित डिलीट करें",
+        "select_rows_delete": "डिलीट करने के लिए रो चुनें",
+        "changes_saved": "बदलाव सेव हो गए!",
+        "rows_deleted": "चयनित रो डिलीट हो गईं!",
+        "enter_name": "कृपया ग्राहक का नाम दर्ज करें",
+        "enter_desc": "कृपया विवरण दर्ज करें",
+        "saved": "सफलतापूर्वक सेव हो गया!"
     }
 }
 
@@ -178,7 +197,6 @@ if check_password():
     menu = [
         t("dashboard"),
         t("new_sale"),
-        t("ledger"),
         t("expense"),
         t("sales_history"),
         t("expense_history")
@@ -199,6 +217,17 @@ if check_password():
         col1.metric(t("income"), f"₹{sales_df['paid'].sum():,.2f}")
         col2.metric(t("pending"), f"₹{sales_df['balance'].sum():,.2f}")
         col3.metric(t("expense_total"), f"₹{expense_df['amt'].sum():,.2f}")
+
+        # Expense Breakdown Pie Chart
+        if not expense_df.empty:
+            st.subheader("Expense Breakdown")
+            expense_by_cat = expense_df.groupby("cat")["amt"].sum()
+            
+            fig, ax = plt.subplots(figsize=(2, 2))
+            ax.pie(expense_by_cat.values, labels=expense_by_cat.index, autopct='%1.1f%%', startangle=90)
+            ax.axis('equal')  # Equal aspect ratio ensures that pie is drawn as a circle.
+            fig.patch.set_alpha(0)  # Remove white background
+            st.pyplot(fig)
 
     # --- NEW SALE ---
     elif choice == t("new_sale"):
@@ -224,17 +253,11 @@ if check_password():
                         bal
                     ])
 
-                    st.success("Saved!")
+                    st.success(t("saved"))
                     st.cache_data.clear()
                     st.rerun()
                 else:
-                    st.error("Enter name")
-
-    # --- LEDGER ---
-    elif choice == t("ledger"):
-        st.subheader(t("ledger_title"))
-        df = sales_df[sales_df["balance"] > 0]
-        st.dataframe(df if not df.empty else pd.DataFrame())
+                    st.error(t("enter_name"))
 
     # --- EXPENSE ---
     elif choice == t("expense"):
@@ -257,17 +280,26 @@ if check_password():
                     st.success(t("exp_saved"))
                     st.cache_data.clear()
                     st.rerun()
+                else:
+                    st.error(t("enter_desc"))
 
     # --- SALES HISTORY ---
     elif choice == t("sales_history"):
         st.subheader(t("sales_history"))
 
-        if not sales_df.empty:
+        if sales_df.empty:
+            st.info("No sales data available.")
+        else:
+            # Edit mode toggle
+            if "sales_edit_mode" not in st.session_state:
+                st.session_state.sales_edit_mode = False
 
-            # Toggle edit mode
-            edit_mode = st.toggle("✏️ Edit Mode")
+            if st.button(t("edit_mode")):
+                st.session_state.sales_edit_mode = not st.session_state.sales_edit_mode
+                st.rerun()
 
-            if edit_mode:
+            if st.session_state.sales_edit_mode:
+                st.info("You are in edit mode. Make changes and save.")
 
                 edited_df = st.data_editor(
                     sales_df.drop(columns=["row_index"]),
@@ -278,9 +310,8 @@ if check_password():
 
                 col1, col2 = st.columns(2)
 
-                # --- SAVE CHANGES ---
                 with col1:
-                    if st.button("💾 Save Changes"):
+                    if st.button(t("save_changes")):
                         for i, row in edited_df.iterrows():
                             original_row_index = sales_df.loc[i, "row_index"]
 
@@ -296,52 +327,88 @@ if check_password():
 
                             update_row(SALES_SHEET, int(original_row_index), updated_row)
 
-                        st.success("All changes saved!")
+                        st.success(t("changes_saved"))
                         st.cache_data.clear()
+                        st.session_state.sales_edit_mode = False
                         st.rerun()
 
-                # --- DELETE SELECTED ---
                 with col2:
                     selected_rows = st.multiselect(
-                        "Select rows to delete",
+                        t("select_rows_delete"),
                         sales_df.index,
                         format_func=lambda x: f"{sales_df.loc[x, 'customer']} - {sales_df.loc[x, 'date']}"
                     )
 
-                    if st.button("🗑️ Delete Selected"):
+                    if st.button(t("delete_selected")):
+                        if selected_rows:
+                            for i in sorted(selected_rows, reverse=True):
+                                delete_row(SALES_SHEET, int(sales_df.loc[i, "row_index"]))
+
+                            st.success(t("rows_deleted"))
+                            st.cache_data.clear()
+                            st.session_state.sales_edit_mode = False
+                            st.rerun()
+                        else:
+                            st.warning("No rows selected for deletion.")
+            else:
+                st.dataframe(sales_df.drop(columns=["row_index"]), use_container_width=True)
+
+                # Delete in view mode
+                st.subheader("Delete Records")
+                selected_rows = st.multiselect(
+                    t("select_rows_delete"),
+                    sales_df.index,
+                    format_func=lambda x: f"{sales_df.loc[x, 'customer']} - {sales_df.loc[x, 'date']}",
+                    key="sales_delete_view"
+                )
+
+                if st.button(t("delete_selected"), key="delete_sales_view"):
+                    if selected_rows:
                         for i in sorted(selected_rows, reverse=True):
                             delete_row(SALES_SHEET, int(sales_df.loc[i, "row_index"]))
 
-                        st.warning("Deleted selected rows")
+                        st.success(t("rows_deleted"))
                         st.cache_data.clear()
                         st.rerun()
-
-            else:
-                st.dataframe(sales_df, use_container_width=True)
-
+                    else:
+                        st.warning("No rows selected for deletion.")
 
     # --- EXPENSE HISTORY ---
     elif choice == t("expense_history"):
         st.subheader(t("expense_history"))
 
-        if not expense_df.empty:
+        if expense_df.empty:
+            st.info("No expense data available.")
+        else:
+            # Edit mode toggle
+            if "expense_edit_mode" not in st.session_state:
+                st.session_state.expense_edit_mode = False
 
-            edit_mode = st.toggle("✏️ Edit Mode")
+            if st.button(t("edit_mode")):
+                st.session_state.expense_edit_mode = not st.session_state.expense_edit_mode
+                st.rerun()
 
-            if edit_mode:
+            if st.session_state.expense_edit_mode:
+                st.info("You are in edit mode. Make changes and save.")
 
                 edited_df = st.data_editor(
                     expense_df.drop(columns=["row_index"]),
                     use_container_width=True,
                     num_rows="dynamic",
-                    key="expense_editor"
+                    key="expense_editor",
+                    column_config={
+                        "cat": st.column_config.SelectboxColumn(
+                            "Category",
+                            options=CATEGORY_MAP[st.session_state.lang],
+                            required=True
+                        )
+                    }
                 )
 
                 col1, col2 = st.columns(2)
 
-                # --- SAVE ---
                 with col1:
-                    if st.button("💾 Save Changes"):
+                    if st.button(t("save_changes")):
                         for i, row in edited_df.iterrows():
                             original_row_index = expense_df.loc[i, "row_index"]
 
@@ -356,25 +423,48 @@ if check_password():
                                 ],
                             )
 
-                        st.success("Expense changes saved!")
+                        st.success(t("changes_saved"))
                         st.cache_data.clear()
+                        st.session_state.expense_edit_mode = False
                         st.rerun()
 
-                # --- DELETE ---
                 with col2:
                     selected_rows = st.multiselect(
-                        "Select rows to delete",
+                        t("select_rows_delete"),
                         expense_df.index,
                         format_func=lambda x: f"{expense_df.loc[x, 'desc']} - {expense_df.loc[x, 'date']}"
                     )
 
-                    if st.button("🗑️ Delete Selected"):
+                    if st.button(t("delete_selected")):
+                        if selected_rows:
+                            for i in sorted(selected_rows, reverse=True):
+                                delete_row(EXPENSE_SHEET, int(expense_df.loc[i, "row_index"]))
+
+                            st.success(t("rows_deleted"))
+                            st.cache_data.clear()
+                            st.session_state.expense_edit_mode = False
+                            st.rerun()
+                        else:
+                            st.warning("No rows selected for deletion.")
+            else:
+                st.dataframe(expense_df.drop(columns=["row_index"]), use_container_width=True)
+
+                # Delete in view mode
+                st.subheader("Delete Records")
+                selected_rows = st.multiselect(
+                    t("select_rows_delete"),
+                    expense_df.index,
+                    format_func=lambda x: f"{expense_df.loc[x, 'desc']} - {expense_df.loc[x, 'date']}",
+                    key="expense_delete_view"
+                )
+
+                if st.button(t("delete_selected"), key="delete_expense_view"):
+                    if selected_rows:
                         for i in sorted(selected_rows, reverse=True):
                             delete_row(EXPENSE_SHEET, int(expense_df.loc[i, "row_index"]))
 
-                        st.warning("Deleted selected expenses")
+                        st.success(t("rows_deleted"))
                         st.cache_data.clear()
                         st.rerun()
-
-            else:
-                st.dataframe(expense_df, use_container_width=True)
+                    else:
+                        st.warning("No rows selected for deletion.")
